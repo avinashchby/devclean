@@ -1,6 +1,6 @@
 {
   "name": "@avinashchby/devclean",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Universal build artifact cleaner — reclaim hundreds of GB from build artifacts you forgot about",
   "type": "module",
   "main": "dist/index.js",
