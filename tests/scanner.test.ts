@@ -75,7 +75,9 @@ describe('scanDirectory', () => {
   });
 
   it('finds Python venv directory', async () => {
-    createProject('py-project', 'requirements.txt', 'venv');
+    const projDir = createProject('py-project', 'requirements.txt', 'venv');
+    // Add pyvenv.cfg to mark it as a real virtualenv
+    fs.writeFileSync(path.join(projDir, 'venv', 'pyvenv.cfg'), 'home = /usr/bin');
     const result = await scanDirectory(TMP_ROOT, ARTIFACT_PATTERNS, makeConfig());
     const venv = result.artifacts.find(
       (a) => a.pattern.name === 'venv' && a.path.includes('py-project'),

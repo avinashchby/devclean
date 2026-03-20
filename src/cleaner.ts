@@ -1,5 +1,6 @@
 import * as fs from 'node:fs/promises';
 import type { FoundArtifact, CleanResult } from './types.js';
+import { isPathSafe, isInsideGit } from './safety.js';
 
 /** Build a dry-run result without deleting anything. */
 function buildDryRunResult(artifacts: FoundArtifact[]): CleanResult {
@@ -10,10 +11,25 @@ function buildDryRunResult(artifacts: FoundArtifact[]): CleanResult {
   };
 }
 
+/** Defense-in-depth: validate path before deletion. */
+function preDeleteCheck(artifactPath: string): string | null {
+  if (!isPathSafe(artifactPath)) {
+    return 'Safety check failed: system or home root directory';
+  }
+  if (isInsideGit(artifactPath)) {
+    return 'Safety check failed: path is inside .git';
+  }
+  return null;
+}
+
 /** Attempt to delete a single artifact directory. */
 async function deleteArtifact(
   artifact: FoundArtifact,
 ): Promise<{ freed: number; error?: string }> {
+  const checkError = preDeleteCheck(artifact.path);
+  if (checkError) {
+    return { freed: 0, error: checkError };
+  }
   try {
     await fs.rm(artifact.path, { recursive: true, force: true });
     return { freed: artifact.sizeBytes };

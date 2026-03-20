@@ -88,14 +88,52 @@ export async function hasProjectFile(
   if (projectFiles.length === 0) return true;
   const parentDir = path.dirname(artifactDir);
   for (const file of projectFiles) {
-    try {
-      await fs.access(path.join(parentDir, file));
-      return true;
-    } catch {
-      // File doesn't exist — try next
+    if (file.includes('*')) {
+      // Glob pattern — scan directory for matches
+      if (await matchesGlobProjectFile(parentDir, file)) return true;
+    } else {
+      try {
+        await fs.access(path.join(parentDir, file));
+        return true;
+      } catch {
+        // File doesn't exist — try next
+      }
     }
   }
   return false;
+}
+
+/** Check if a directory contains files matching a glob pattern (e.g., *.csproj). */
+async function matchesGlobProjectFile(dir: string, pattern: string): Promise<boolean> {
+  try {
+    const entries = await fs.readdir(dir);
+    const regex = new RegExp('^' + pattern.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+    return entries.some((e) => regex.test(e));
+  } catch {
+    return false;
+  }
+}
+
+/** Validate that a .env or env directory is actually a Python virtualenv. */
+export async function isVirtualEnv(dirPath: string): Promise<boolean> {
+  try {
+    await fs.access(path.join(dirPath, 'pyvenv.cfg'));
+    return true;
+  } catch {
+    // fall through
+  }
+  try {
+    await fs.access(path.join(dirPath, 'bin', 'activate'));
+    return true;
+  } catch {
+    // fall through
+  }
+  try {
+    await fs.access(path.join(dirPath, 'Scripts', 'activate'));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Build glob patterns for all artifact patterns to search. */
@@ -122,47 +160,57 @@ function buildIgnorePatterns(): string[] {
   ];
 }
 
-/** Map a found path to its matching ArtifactPattern(s). */
-function findMatchingPattern(
+/** Find all matching ArtifactPatterns for a found path. */
+function findMatchingPatterns(
   foundPath: string,
   patterns: ArtifactPattern[],
-): ArtifactPattern | undefined {
+): ArtifactPattern[] {
   const dirName = path.basename(foundPath);
-  return patterns.find((p) =>
+  return patterns.filter((p) =>
     p.patterns.some((pat) => {
       if (pat.includes('*')) {
-        return fg.isDynamicPattern(pat) && new RegExp(
-          '^' + pat.replace(/\*/g, '.*') + '$',
-        ).test(dirName);
+        const regex = new RegExp('^' + pat.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+        return regex.test(dirName);
       }
       return dirName === pat || foundPath.endsWith(path.sep + pat);
     }),
   );
 }
 
-/** Process a single found directory: validate, measure, build artifact. */
+/** Names that require virtualenv validation before treating as Python venvs. */
+const VENV_PATTERN_NAMES = new Set(['.env', 'env', 'venv', '.venv']);
+
+/** Process a single found directory: try all matching patterns, validate, measure. */
 async function processFoundDir(
   dirPath: string,
-  pattern: ArtifactPattern,
+  matchingPatterns: ArtifactPattern[],
   config: DevcleanConfig,
 ): Promise<FoundArtifact | null> {
   const normalized = path.normalize(path.resolve(dirPath));
   if (await isProtected(normalized, config)) return null;
   if (matchesIgnorePattern(normalized, config.ignorePaths)) return null;
-  if (!(await hasProjectFile(normalized, pattern.projectFiles))) return null;
+
+  // Try each matching pattern until one passes project file validation
+  let matchedPattern: ArtifactPattern | null = null;
+  for (const pattern of matchingPatterns) {
+    if (await hasProjectFile(normalized, pattern.projectFiles)) {
+      matchedPattern = pattern;
+      break;
+    }
+  }
+  if (!matchedPattern) return null;
+
+  // For venv-like patterns, verify it's actually a virtualenv
+  if (VENV_PATTERN_NAMES.has(matchedPattern.name)) {
+    if (!(await isVirtualEnv(normalized))) return null;
+  }
 
   try {
     const [sizeBytes, stat] = await Promise.all([
       getDirectorySize(normalized),
       fs.stat(normalized),
     ]);
-    return {
-      path: normalized,
-      pattern,
-      sizeBytes,
-      lastModified: stat.mtime,
-      selected: false,
-    };
+    return { path: normalized, pattern: matchedPattern, sizeBytes, lastModified: stat.mtime, selected: false };
   } catch {
     return null;
   }
@@ -196,10 +244,10 @@ export async function scanDirectory(
   for await (const entry of stream) {
     scanned++;
     const dirPath = entry.toString();
-    const pattern = findMatchingPattern(dirPath, patterns);
-    if (!pattern) continue;
+    const matched = findMatchingPatterns(dirPath, patterns);
+    if (matched.length === 0) continue;
 
-    const artifact = await processFoundDir(dirPath, pattern, config);
+    const artifact = await processFoundDir(dirPath, matched, config);
     if (artifact) {
       artifacts.push(artifact);
     }

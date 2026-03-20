@@ -1,19 +1,6 @@
 import chalk from 'chalk';
+import { formatSize } from '../analyzer.js';
 import type { FoundArtifact, CleanResult } from '../types.js';
-
-/** Format bytes into human-readable string (e.g., "1.23 GB"). */
-function formatSize(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let size = bytes;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex++;
-  }
-  return unitIndex === 0
-    ? `${size} ${units[unitIndex]}`
-    : `${size.toFixed(2)} ${units[unitIndex]}`;
-}
 
 /** Print a bordered table with artifact type counts and sizes. */
 export function printReport(

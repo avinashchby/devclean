@@ -140,7 +140,7 @@ function pythonPatterns(): ArtifactPattern[] {
     {
       name: '__pycache__',
       patterns: ['__pycache__'],
-      projectFiles: PYTHON_PROJECT_FILES,
+      projectFiles: [],
       language: 'Python',
       description: 'Python bytecode cache',
     },
